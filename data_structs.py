@@ -1,7 +1,5 @@
-from collections import defaultdict
-
-# Define data classes for structured data storage
 from dataclasses import dataclass, field
+import itertools
 
 # Some Settings
 transition_time_of_aircraft = 60
@@ -10,6 +8,7 @@ transition_time_of_demand = 40
 @dataclass(order=True)
 class PrioritizedItem:
     priority: int
+    count: int
     item: object = field(compare=False)
 
 @dataclass

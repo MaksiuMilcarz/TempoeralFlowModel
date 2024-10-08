@@ -2,6 +2,7 @@ import heapq
 from collections import defaultdict
 import random
 import time
+import itertools
 
 from data_structs import Aircraft, Airport, Demand, Flight, PrioritizedItem
 
@@ -14,135 +15,127 @@ class Scheduler:
         self.flight_schedule = {}
         self.demand_paths = defaultdict(list)  # Records the flight IDs and weights assigned to each demand
 
-        self.SCHEDULE_DURATION = 7 * 24 * 60  # One week in minutes
+        self.SCHEDULE_DURATION = 2 * 24 * 60  # One week in minutes
         self.RESERVED_RETURN_TIME = 180  # Reserved time in minutes for aircraft to return to base
+        self.max_path_length = 5  # Maximum number of flights in a path for a demand
+        
+        self.num_airports = 12
+        self.num_aircraft = 10
+        self.num_demands = 40
+        self.demand_ready_times = [0, 720, 1440]
 
     def load_data(self):
-        # Define airports
-        airport_codes = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+        import string
+
+        # Generate airport codes (e.g., 'A', 'B', ..., 'Z')
+        airport_codes = list(string.ascii_uppercase[:self.num_airports])
         self.airports = {code: Airport(code) for code in airport_codes}
 
-        # Define demands with demand_ready_time
-        self.demands = [
-            Demand(1, 'A', 'D', 500, demand_ready_time=0),
-            Demand(2, 'B', 'C', 700, demand_ready_time=120),
-            Demand(3, 'C', 'E', 600, demand_ready_time=240),
-            Demand(4, 'D', 'A', 400, demand_ready_time=360),
-            Demand(5, 'E', 'B', 800, demand_ready_time=480),
-            Demand(6, 'F', 'G', 550, demand_ready_time=600),
-            Demand(7, 'G', 'H', 650, demand_ready_time=720),
-            Demand(8, 'H', 'F', 750, demand_ready_time=840),
-            Demand(9, 'A', 'E', 900, demand_ready_time=960),
-            Demand(10,'B', 'D', 850, demand_ready_time=1080),
-            Demand(11,'C', 'F', 950, demand_ready_time=1200),
-            Demand(12,'D', 'G', 1000, demand_ready_time=1320),
-            Demand(13,'E', 'H', 600, demand_ready_time=1440),
-            Demand(14,'F', 'A', 500, demand_ready_time=1560),
-            Demand(15,'G', 'B', 700, demand_ready_time=1680),
-            Demand(16,'H', 'C', 800, demand_ready_time=1800),
-            # Add more demands as needed
-        ]
+        # Generate aircraft
+        self.aircraft = [Aircraft(aircraft_id=i+1, capacity=200) for i in range(self.num_aircraft)]
 
-        # Define aircraft without home bases
-        self.aircraft = [
-            Aircraft(aircraft_id=i+1, capacity=100) for i in range(14)
-        ]
-
-        # Define fixed flight durations between airports (in minutes)
-        self.flight_durations = {}
-        for origin in airport_codes:
-            for destination in airport_codes:
-                if origin != destination:
-                    # For simplicity, assign a fixed duration based on alphabetical distance
-                    duration = abs(ord(origin) - ord(destination)) * 30 + 60  # Base time + distance factor
-                    self.flight_durations[(origin, destination)] = duration
+        # Generate random demands
+        self.demands = []
+        for i in range(1, self.num_demands + 1):
+            origin = random.choice(airport_codes)
+            destination = random.choice(airport_codes)
+            while destination == origin:
+                destination = random.choice(airport_codes)
+            total_weight = random.randint(10, 100)  # Random weight between 10 and 100
+            demand_ready_time = random.choice(self.demand_ready_times)
+            demand = Demand(
+                demand_id=i,
+                origin=origin,
+                destination=destination,
+                total_weight=total_weight,
+                demand_ready_time=demand_ready_time
+            )
+            self.demands.append(demand)
 
     def assign_aircraft_bases(self):
-        # Assign aircraft to airports based on demands
-        demand_counts = defaultdict(float)
+        # Calculate total demand weight per airport
+        demand_weights = defaultdict(float)
         for demand in self.demands:
-            demand_counts[demand.origin] += demand.total_weight
+            demand_weights[demand.origin] += demand.total_weight
 
-        # Sort airports by total demand weight
-        airports_sorted = sorted(self.airports.keys(), key=lambda x: -demand_counts[x])
+        # Sort airports by total demand weight in descending order
+        airports_by_demand = sorted(self.airports.keys(), key=lambda x: -demand_weights[x])
 
-        # Assign aircraft to airports with highest demand
-        aircraft_count = len(self.aircraft)
-        airports_count = len(self.airports)
-        aircraft_per_airport = aircraft_count // airports_count
+        # Assign aircraft to airports based on demand
+        aircraft_per_airport = len(self.aircraft) // len(self.airports)
+        extra_aircraft = len(self.aircraft) % len(self.airports)
+        aircraft_index = 0
 
-        index = 0
-        for airport_code in airports_sorted:
-            for _ in range(aircraft_per_airport):
-                if index < aircraft_count:
-                    self.aircraft[index].home_base = airport_code
-                    index +=1
+        for airport_code in airports_by_demand:
+            num_aircraft = aircraft_per_airport + (1 if extra_aircraft > 0 else 0)
+            extra_aircraft -= 1 if extra_aircraft > 0 else 0
+
+            for _ in range(num_aircraft):
+                if aircraft_index < len(self.aircraft):
+                    self.aircraft[aircraft_index].home_base = airport_code
+                    self.aircraft[aircraft_index].current_location = airport_code
+                    aircraft_index += 1
                 else:
                     break
 
-        # Assign remaining aircraft to airports with highest remaining demand
-        while index < aircraft_count:
-            for airport_code in airports_sorted:
-                if index < aircraft_count:
-                    self.aircraft[index].home_base = airport_code
-                    index +=1
-                else:
-                    break
+    def generate_possible_flights(self):
+        airport_codes = list(self.airports.keys())
+        all_possible_flights = [(a, b) for a in airport_codes for b in airport_codes if a != b]
 
-        # If any aircraft have no home base, assign them randomly
-        for aircraft in self.aircraft:
-            if not aircraft.home_base:
-                aircraft.home_base = random.choice(list(self.airports.keys()))
+        # Randomly sample flights (e.g., select 70% of all possible flights)
+        sample_fraction = 0.7
+        num_flights_to_select = int(len(all_possible_flights) * sample_fraction)
+        selected_flights = random.sample(all_possible_flights, num_flights_to_select)
 
-    def prune_flights(self):
-        # Implement a function to prune unlikely flights
-        # For example, limit flights to only between airports with demands
-        # Or only generate flights that could potentially carry demands
+        # Define flight durations
+        self.flight_durations = {}
+        for (origin, destination) in selected_flights:
+            duration = abs(ord(origin) - ord(destination)) * 30 + 60  # Example duration calculation
+            self.flight_durations[(origin, destination)] = duration
 
-        # Collect airports involved in demands
-        demand_airports = set()
-        for demand in self.demands:
-            demand_airports.add(demand.origin)
-            demand_airports.add(demand.destination)
+        self.possible_flights = set(selected_flights)
 
-        # Generate a set of potential flights between demand airports
-        all_possible_flights = list()
-        for origin in demand_airports:
-            for destination in demand_airports:
-                if origin != destination:
-                    all_possible_flights.append((origin, destination))
-
-        # Determine the fraction of flights to allow (e.g., 50%)
-        fraction = 0.5  # Adjust this value as needed
-        n = int(len(all_possible_flights) * fraction)
-
-        # Randomly sample 'n' flights to include
-        allowed_flights = set(random.sample(all_possible_flights, n))
-
-        return allowed_flights
-
-    def generate_flight_schedule(self):
-        potential_flights = self.prune_flights()
-
+    def generate_aircraft_routes(self):
         flight_id_counter = 1
         for aircraft in self.aircraft:
             current_time = aircraft.available_time
-            current_location = aircraft.home_base
+            current_location = aircraft.current_location
             flights_for_aircraft = []
             aircraft_route_complete = False
 
             while current_time < self.SCHEDULE_DURATION - self.RESERVED_RETURN_TIME and not aircraft_route_complete:
-                # Find potential flights from the current location
-                possible_destinations = [dest for (orig, dest) in potential_flights if orig == current_location]
-                
-                if not possible_destinations:
-                    # No further flights; schedule return to base if not already there
+                # Find possible flights from the current location
+                possible_flights = [(dest, self.flight_durations[(current_location, dest)])
+                                    for (orig, dest) in self.possible_flights
+                                    if orig == current_location]
+
+                if not possible_flights:
+                    break  # No further flights possible
+
+                # Prioritize flights that can transport untransported demand
+                demand_destinations = [
+                    dest for dest in [dest for (dest, _) in possible_flights]
+                    if any(demand.origin == current_location and demand.destination == dest and demand.untransported_weight > 0
+                        for demand in self.demands)
+                ]
+                if demand_destinations:
+                    # Filter possible_flights to those destinations with unmet demands
+                    possible_flights = [(dest, dur) for (dest, dur) in possible_flights if dest in demand_destinations]
+
+                # Sort possible flights by earliest demand ready time
+                sorted_flights = sorted(possible_flights, key=lambda x: min(
+                    (demand.demand_ready_time for demand in self.demands
+                    if demand.origin == current_location and demand.destination == x[0] and demand.untransported_weight > 0),
+                    default=self.SCHEDULE_DURATION
+                ))
+
+                if not sorted_flights:
+                    # No flights can transport demands; schedule return to base
                     if current_location != aircraft.home_base:
-                        # Schedule return flight to home base
-                        return_flight_time = self.flight_durations.get((current_location, aircraft.home_base), None)
-                        if return_flight_time:
+                        return_flight_duration = self.flight_durations.get((current_location, aircraft.home_base))
+                        if return_flight_duration:
                             departure_time = current_time + aircraft.turnaround_time
-                            arrival_time = departure_time + return_flight_time
+                            arrival_time = departure_time + return_flight_duration
                             if arrival_time <= self.SCHEDULE_DURATION:
                                 return_flight = Flight(
                                     flight_id=flight_id_counter,
@@ -151,169 +144,181 @@ class Scheduler:
                                     departure_time=departure_time,
                                     arrival_time=arrival_time,
                                     aircraft_id=aircraft.aircraft_id,
-                                    capacity=aircraft.capacity,
-                                    aircraft_turnaround_time=aircraft.turnaround_time
+                                    capacity=aircraft.capacity
                                 )
                                 flights_for_aircraft.append(return_flight)
                                 self.flights.append(return_flight)
-                                self.flight_schedule[flight_id_counter] = return_flight
                                 flight_id_counter += 1
-                        aircraft_route_complete = True
-                    break  # No possible destinations
+                    break  # Exit the while loop for this aircraft
 
-                # Select the next destination based on potential demands
-                next_flight = None
-                for destination in possible_destinations:
-                    flight_time = self.flight_durations[(current_location, destination)]
+                # Select the next flight based on sorted_flights
+                destination, flight_time = sorted_flights[0]
+
+                # Get the earliest demand_ready_time for this destination
+                matching_demands = [
+                    demand.demand_ready_time for demand in self.demands
+                    if demand.origin == current_location and demand.destination == destination and demand.untransported_weight > 0
+                ]
+
+                if matching_demands:
+                    earliest_ready_time = min(matching_demands)
+                    departure_time = max(current_time + aircraft.turnaround_time, earliest_ready_time)
+                else:
+                    # No matching demands; assign departure_time as current_time + turnaround_time
                     departure_time = current_time + aircraft.turnaround_time
-                    arrival_time = departure_time + flight_time
 
-                    if arrival_time > self.SCHEDULE_DURATION - self.RESERVED_RETURN_TIME:
-                        continue  # Skip flights that exceed schedule duration
+                arrival_time = departure_time + flight_time
 
-                    # Check if there is any demand from current_location to destination
-                    has_demand = any(
-                        demand.origin == current_location and demand.destination == destination and demand.untransported_weight > 0
-                        for demand in self.demands
-                    )
+                if arrival_time > self.SCHEDULE_DURATION - self.RESERVED_RETURN_TIME:
+                    # Not enough time to perform this flight; schedule return to base
+                    if current_location != aircraft.home_base:
+                        return_flight_duration = self.flight_durations.get((current_location, aircraft.home_base))
+                        if return_flight_duration:
+                            departure_time = current_time + aircraft.turnaround_time
+                            arrival_time = departure_time + return_flight_duration
+                            if arrival_time <= self.SCHEDULE_DURATION:
+                                return_flight = Flight(
+                                    flight_id=flight_id_counter,
+                                    origin=current_location,
+                                    destination=aircraft.home_base,
+                                    departure_time=departure_time,
+                                    arrival_time=arrival_time,
+                                    aircraft_id=aircraft.aircraft_id,
+                                    capacity=aircraft.capacity
+                                )
+                                flights_for_aircraft.append(return_flight)
+                                self.flights.append(return_flight)
+                                flight_id_counter += 1
+                    break  # Exit the while loop for this aircraft
 
-                    if has_demand:
-                        # Schedule this flight
+                # Schedule this flight
+                flight = Flight(
+                    flight_id=flight_id_counter,
+                    origin=current_location,
+                    destination=destination,
+                    departure_time=departure_time,
+                    arrival_time=arrival_time,
+                    aircraft_id=aircraft.aircraft_id,
+                    capacity=aircraft.capacity
+                )
+                flights_for_aircraft.append(flight)
+                self.flights.append(flight)
+                flight_id_counter += 1
+
+                # Update current location and time
+                current_location = destination
+                current_time = arrival_time
+
+                # Prevent infinite loops by limiting the number of flights per aircraft
+                if len(flights_for_aircraft) >= 50:  # Adjust as necessary
+                    break
+
+            # Schedule return to home base if not already there
+            if current_location != aircraft.home_base:
+                return_flight_duration = self.flight_durations.get((current_location, aircraft.home_base))
+                if return_flight_duration:
+                    departure_time = current_time + aircraft.turnaround_time
+                    arrival_time = departure_time + return_flight_duration
+                    if arrival_time <= self.SCHEDULE_DURATION:
                         flight = Flight(
                             flight_id=flight_id_counter,
                             origin=current_location,
-                            destination=destination,
+                            destination=aircraft.home_base,
                             departure_time=departure_time,
                             arrival_time=arrival_time,
                             aircraft_id=aircraft.aircraft_id,
-                            capacity=aircraft.capacity,
-                            aircraft_turnaround_time=aircraft.turnaround_time
+                            capacity=aircraft.capacity
                         )
-                        next_flight = flight
-                        break  # Found a suitable flight
-
-                if next_flight:
-                    flights_for_aircraft.append(next_flight)
-                    self.flights.append(next_flight)
-                    self.flight_schedule[flight_id_counter] = next_flight
-                    flight_id_counter += 1
-
-                    # Update current location and time
-                    current_location = next_flight.destination
-                    current_time = next_flight.arrival_time
-                else:
-                    # No suitable flights; schedule return to base if not already there
-                    if current_location != aircraft.home_base:
-                        # Schedule return flight to home base
-                        return_flight_time = self.flight_durations.get((current_location, aircraft.home_base), None)
-                        if return_flight_time:
-                            departure_time = current_time + aircraft.turnaround_time
-                            arrival_time = departure_time + return_flight_time
-                            if arrival_time <= self.SCHEDULE_DURATION:
-                                return_flight = Flight(
-                                    flight_id=flight_id_counter,
-                                    origin=current_location,
-                                    destination=aircraft.home_base,
-                                    departure_time=departure_time,
-                                    arrival_time=arrival_time,
-                                    aircraft_id=aircraft.aircraft_id,
-                                    capacity=aircraft.capacity,
-                                    aircraft_turnaround_time=aircraft.turnaround_time
-                                )
-                                flights_for_aircraft.append(return_flight)
-                                self.flights.append(return_flight)
-                                self.flight_schedule[flight_id_counter] = return_flight
-                                flight_id_counter += 1
-                        aircraft_route_complete = True
-                    else:
-                        # Aircraft is already at home base; end route
-                        aircraft_route_complete = True
+                        flights_for_aircraft.append(flight)
+                        self.flights.append(flight)
+                        flight_id_counter += 1
 
             # Assign the route to the aircraft
             aircraft.route = flights_for_aircraft
 
-    def generate_initial_solution(self):
-        # Initialize total untransported weight
-        total_untransported_weight = sum(demand.untransported_weight for demand in self.demands)
-        total_demand_weight = total_untransported_weight
+    def assign_demands_to_flights(self):
+        # Build a flight graph
+        flight_graph = defaultdict(list)
+        for flight in self.flights:
+            flight_graph[flight.origin].append(flight)
 
-        # Sort demands based on demand_ready_time
-        demands_sorted = sorted(self.demands, key=lambda x: x.demand_ready_time)
+        # Sort demands by ready time
+        demands_sorted = sorted(self.demands, key=lambda d: d.demand_ready_time)
 
         for demand in demands_sorted:
-            # While there is untransported weight for this demand
             while demand.untransported_weight > 0:
-                # Find feasible flights starting after demand_ready_time
-                feasible_flights = [flight for flight in self.flights
-                                    if flight.origin == demand.origin and
-                                    flight.departure_time >= demand.demand_ready_time]
+                path = self.find_earliest_path(demand, flight_graph)
+                if path:
+                    # Assign demand to the flights in the path
+                    min_available_capacity = min(
+                        flight.capacity - sum(w for (d, w) in flight.demands_assigned) for flight in path
+                    )
+                    weight_to_assign = min(demand.untransported_weight, min_available_capacity)
 
-                # Use a priority queue to select flights with earliest arrival times
-                flight_queue = []
-                for flight in feasible_flights:
-                    heapq.heappush(flight_queue, PrioritizedItem(flight.arrival_time, ([flight], flight.aircraft_id)))
-
-                path_found = False
-                visited = set()
-                while flight_queue and not path_found:
-                    item = heapq.heappop(flight_queue)
-                    arrival_time = item.priority
-                    path, aircraft_id = item.item
-                    last_flight = path[-1]
-                    visited.add((last_flight.destination, aircraft_id))
-
-                    # Calculate handling time
-                    if len(path) == 1:
-                        # First flight, include handling time at origin
-                        handling_time = 0  # Assuming demand handling time occurs during aircraft turnaround
+                    if weight_to_assign > 0:
+                        for flight in path:
+                            flight.demands_assigned.append((demand, weight_to_assign))
+                        demand.untransported_weight -= weight_to_assign
+                        # Record the demand's path
+                        arrival_time = path[-1].arrival_time
+                        self.demand_paths[demand.demand_id].append((path, weight_to_assign, arrival_time))
                     else:
-                        # Include demand handling time if changing aircraft
-                        if last_flight.aircraft_id != path[-2].aircraft_id:
-                            handling_time = demand.handling_time
-                        else:
-                            handling_time = 0  # No handling time if same aircraft
+                        break  # No capacity available
+                else:
+                    break  # No path found
 
-                    # Update arrival time to include handling time
-                    arrival_time += handling_time
+    def find_earliest_path(self, demand, flight_graph):
+        import heapq
+        max_path_length = self.max_path_length
 
-                    if last_flight.destination == demand.destination:
-                        # Calculate how much weight can be transported
-                        min_capacity = min(flight.capacity - sum(wt for (d, wt) in flight.demands_assigned) for flight in path)
-                        weight_to_transport = min(demand.untransported_weight, min_capacity)
+        heap = []
+        counter = itertools.count()
 
-                        if weight_to_transport > 0:
-                            # Assign partial demand to flights in the path
-                            for flight in path:
-                                flight.demands_assigned.append((demand, weight_to_transport))
-                            demand.untransported_weight -= weight_to_transport
-                            self.demand_paths[demand.demand_id].append((path, weight_to_transport))
-                            path_found = True
-                        else:
-                            continue  # No capacity, try next path
-                    else:
-                        # Explore connecting flights
-                        connecting_flights = [flight for flight in self.flights
-                                              if flight.origin == last_flight.destination and
-                                              flight.departure_time >= last_flight.arrival_time + last_flight.aircraft_turnaround_time and
-                                              (flight.destination, flight.aircraft_id) not in visited]
+        # Start with flights departing from the demand's origin after the demand's ready time
+        for flight in flight_graph.get(demand.origin, []):
+            if flight.departure_time >= demand.demand_ready_time and \
+               flight.capacity - sum(w for (d, w) in flight.demands_assigned) > 0:
+                heapq.heappush(heap, PrioritizedItem(flight.arrival_time, next(counter), [flight]))
 
-                        for conn_flight in connecting_flights:
-                            new_path = path + [conn_flight]
-                            total_arrival_time = conn_flight.arrival_time
-                            heapq.heappush(flight_queue, PrioritizedItem(total_arrival_time, (new_path, conn_flight.aircraft_id)))
+        visited = set()
 
-                if not path_found:
-                    print(f"Could not fully transport Demand {demand.demand_id}. Untransported weight: {demand.untransported_weight}")
-                    break  # Cannot transport more of this demand
+        while heap:
+            item = heapq.heappop(heap)
+            path = item.item
+            last_flight = path[-1]
 
-        # Calculate total untransported weight
-        total_untransported_weight = sum(demand.untransported_weight for demand in self.demands)
-        transported_weight = total_demand_weight - total_untransported_weight
+            if last_flight.destination == demand.destination:
+                return path  # Found a path
 
-        print(f"Total demand weight: {total_demand_weight}")
-        print(f"Total transported weight: {transported_weight}")
-        print(f"Total untransported weight: {total_untransported_weight}")
+            if len(path) >= max_path_length:
+                continue
 
+            visited_key = (last_flight.destination, last_flight.arrival_time)
+            if visited_key in visited:
+                continue
+            visited.add(visited_key)
+
+            for next_flight in flight_graph.get(last_flight.destination, []):
+                if next_flight.departure_time >= last_flight.arrival_time + last_flight.aircraft_turnaround_time and \
+                   next_flight.capacity - sum(w for (d, w) in next_flight.demands_assigned) > 0:
+                    new_path = path + [next_flight]
+                    heapq.heappush(heap, PrioritizedItem(next_flight.arrival_time, next(counter), new_path))
+
+        return None  # No path found
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
+     
     def run(self):
         start_time = time.time()
         function_times = {}
@@ -327,75 +332,63 @@ class Scheduler:
         function_times['assign_aircraft_base'] = time.time() - t0
         
         t0 = time.time()
-        self.generate_flight_schedule()
-        function_times['generate_flight_schedule'] = time.time() - t0
+        self.generate_possible_flights()
+        function_times['generate_possible_flights'] = time.time() - t0
         
         t0 = time.time()
-        self.generate_initial_solution()
-        function_times['generate_initial_solution'] = time.time() - t0
+        self.generate_aircraft_routes()
+        function_times['generate_aircraft_routes'] = time.time() - t0
         
         t0 = time.time()
+        self.assign_demands_to_flights()
+        function_times['assign_demands_to_flights'] = time.time() - t0
+
         self.display_results()
-        function_times['display_results'] = time.time() - t0
         
         total_time = time.time() - start_time
-        function_times['total_time'] = time.time() - t0
+        function_times['total_time'] = total_time
+        print("\nFunction Times:")
         for func_name, duration in function_times.items():
             print(f"{func_name} took {duration:.6f} seconds")
-            
-    def get_possible_connections(self, destination):
-        # Return possible intermediate destinations that can connect to the final destination
-        # For simplicity, let's return all airports connected to the destination
-        connected_airports = set()
-        for (orig, dest) in self.flight_durations.keys():
-            if dest == destination:
-                connected_airports.add(orig)
-        return connected_airports
     
-    def find_shortest_path(self, demand):
-        # Dijkstra's algorithm to find the shortest path based on arrival time
-        flight_graph = defaultdict(list)
-        for flight in self.flights:
-            flight_graph[flight.origin].append(flight)
-
-        visited = set()
-        heap = []
-        # Start with flights departing from the demand's origin after demand_ready_time
-        for flight in flight_graph[demand.origin]:
-            if flight.departure_time >= demand.demand_ready_time:
-                heapq.heappush(heap, (flight.arrival_time, [flight]))
-
-        while heap:
-            arrival_time, path = heapq.heappop(heap)
-            last_flight = path[-1]
-            if last_flight.destination == demand.destination:
-                return path  # Found a path to the destination
-            if (last_flight.destination, last_flight.aircraft_id) in visited:
-                continue
-            visited.add((last_flight.destination, last_flight.aircraft_id))
-            for next_flight in flight_graph.get(last_flight.destination, []):
-                if next_flight.departure_time >= last_flight.arrival_time + last_flight.aircraft_turnaround_time:
-                    new_path = path + [next_flight]
-                    heapq.heappush(heap, (next_flight.arrival_time, new_path))
-        return None  # No path found
-
     def display_results(self):
         print("\nAircraft Routes:")
         for aircraft in self.aircraft:
-            route = ' -> '.join([f"{flight.origin}->{flight.destination}({flight.flight_id})" for flight in aircraft.route])
-            print(f"Aircraft {aircraft.aircraft_id} (Base {aircraft.home_base}) Route: {route}")
+            route_str = ' -> '.join(f"{flight.origin}->{flight.destination}({flight.flight_id})" for flight in aircraft.route)
+            print(f"Aircraft {aircraft.aircraft_id} (Base {aircraft.home_base}): {route_str}")
 
         print("\nDemand Assignments:")
-        for demand in self.demands:
-            if demand.demand_id in self.demand_paths:
-                print(f"Demand {demand.demand_id} assigned paths:")
-                for path, weight in self.demand_paths[demand.demand_id]:
-                    flight_ids = [f.flight_id for f in path]
-                    print(f"  Flights: {flight_ids}, Weight: {weight}")
-            else:
-                print(f"Demand {demand.demand_id} could not be assigned any path.")
+        total_demands = len(self.demands)
+        total_weight = sum(d.total_weight for d in self.demands)
+        transported_weight = 0
+        delivery_times = []
+        for demand_id, paths in self.demand_paths.items():
+            demand = next(d for d in self.demands if d.demand_id == demand_id)
+            print(f"Demand {demand_id} from {demand.origin} to {demand.destination}:")
+            for path, weight, arrival_time in paths:
+                flight_ids = [flight.flight_id for flight in path]
+                print(f"  Path: {flight_ids}, Weight: {weight}, Arrival Time: {arrival_time}")
+                transported_weight += weight
+                delivery_times.append(arrival_time - demand.demand_ready_time)
+        unmet_weight = sum(d.untransported_weight for d in self.demands)
 
         print("\nUntransported Demands:")
         for demand in self.demands:
             if demand.untransported_weight > 0:
                 print(f"Demand {demand.demand_id} untransported weight: {demand.untransported_weight}")
+
+        # Calculate statistics
+        unmet_demand_percentage = (unmet_weight / total_weight) * 100 if total_weight > 0 else 0
+        average_delivery_time = sum(delivery_times) / len(delivery_times) if delivery_times else 0
+        unique_flights = len(set(flight.flight_id for flight in self.flights))
+        total_capacity = sum(f.capacity for f in self.flights)
+        cap_demand_ratio = total_capacity / total_weight if total_weight > 0 else 0
+
+        print("\nStatistics:")
+        print(f"Total Capacity: {total_capacity}")
+        print(f"Total Demand Weight: {total_weight}")
+        print(f"Total Transported Weight: {transported_weight}")
+        print(f"capacity-to-demand ratio: {cap_demand_ratio:.2f}")
+        print(f"Unmet Demand Percentage: {unmet_demand_percentage:.2f}%")
+        print(f"Average Delivery Time: {average_delivery_time:.2f} minutes")
+        print(f"Number of Unique Flights: {unique_flights}")
