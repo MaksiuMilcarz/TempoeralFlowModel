@@ -1,5 +1,5 @@
-from scheduler import Scheduler
+from initial_solution import InitialSolution
 
 if __name__ == "__main__":
-    scheduler = Scheduler()
-    scheduler.run()
+    initial_solution = InitialSolution()
+    initial_solution.run()
