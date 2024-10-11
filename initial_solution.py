@@ -12,22 +12,6 @@ import setup
 class InitialSolution:
     def __init__(self):
         self.state = State()  
-
-# =============================================================================
-
-    def schedule_return_flight(self, aircraft, current_location, current_time, flights_for_aircraft, flight_id_counter):
-        state = self.state
-        path = self.find_path_for_aircraft(current_location, aircraft.home_base, current_time, aircraft, flight_id_counter)
-        if path:
-            for flight in path:
-                flights_for_aircraft.append(flight)
-                state.flights.append(flight)
-                flight_id_counter += 1
-            current_location = aircraft.home_base
-            current_time = path[-1].arrival_time
-        else:
-            print(f"Aircraft {aircraft.aircraft_id} cannot return to base {aircraft.home_base} from {current_location}")
-        return flight_id_counter, current_location, current_time
     
 # =============================================================================
 
@@ -153,7 +137,67 @@ class InitialSolution:
                     break  # No path found
             if demand.untransported_weight > 0:
                 print(f"Demand {demand.demand_id} untransported weight: {demand.untransported_weight}")
-                
+
+# =============================================================================
+
+    def find_earliest_path(self, demand, flight_graph, aircraft_dict):
+        state = self.state
+        max_path_length = state.max_path_length
+
+        heap = []
+        counter = itertools.count()
+
+        # Start with flights departing from the demand's origin after the demand's ready time
+        for flight in flight_graph.get(demand.origin, []):
+            if flight.departure_time >= demand.demand_ready_time and \
+               flight.capacity - sum(w for (d, w) in flight.demands_assigned) > 0:
+                heapq.heappush(heap, PrioritizedItem(flight.arrival_time, next(counter), [flight]))
+
+        visited = set()
+
+        while heap:
+            item = heapq.heappop(heap)
+            path = item.item
+            last_flight = path[-1]
+
+            if last_flight.destination == demand.destination:
+                return path  # Found a path
+
+            if len(path) >= max_path_length:
+                continue
+
+            visited_key = (last_flight.destination, last_flight.arrival_time)
+            if visited_key in visited:
+                continue
+            visited.add(visited_key)
+
+            last_flight_aircraft = aircraft_dict[last_flight.aircraft_id]
+            aircraft_turnaround_time = last_flight_aircraft.turnaround_time
+
+            for next_flight in flight_graph.get(last_flight.destination, []):
+                if next_flight.departure_time >= last_flight.arrival_time + aircraft_turnaround_time and \
+                   next_flight.capacity - sum(w for (d, w) in next_flight.demands_assigned) > 0:
+                    new_path = path + [next_flight]
+                    heapq.heappush(heap, PrioritizedItem(next_flight.arrival_time, next(counter), new_path))
+
+        return None  # No path found
+
+# =============================================================================
+
+    def schedule_return_flight(self, aircraft, current_location, current_time, flights_for_aircraft, flight_id_counter):
+        state = self.state
+        path = self.find_path_for_aircraft(current_location, aircraft.home_base, current_time, aircraft, flight_id_counter)
+        if path:
+            for flight in path:
+                flights_for_aircraft.append(flight)
+                state.flights.append(flight)
+                flight_id_counter += 1
+            current_location = aircraft.home_base
+            current_time = path[-1].arrival_time
+        else:
+            print(f"Aircraft {aircraft.aircraft_id} cannot return to base {aircraft.home_base} from {current_location}")
+        return flight_id_counter, current_location, current_time
+           
 # =============================================================================
 
     def find_path_for_aircraft(self, origin, destination, current_time, aircraft, flight_id_counter):
@@ -228,50 +272,7 @@ class InitialSolution:
                 heapq.heappush(heap, PrioritizedItem(arrival_time, next(counter), new_path))
 
         return None  # No path found
-    
-# =============================================================================
-
-    def find_earliest_path(self, demand, flight_graph, aircraft_dict):
-        state = self.state
-        max_path_length = state.max_path_length
-
-        heap = []
-        counter = itertools.count()
-
-        # Start with flights departing from the demand's origin after the demand's ready time
-        for flight in flight_graph.get(demand.origin, []):
-            if flight.departure_time >= demand.demand_ready_time and \
-               flight.capacity - sum(w for (d, w) in flight.demands_assigned) > 0:
-                heapq.heappush(heap, PrioritizedItem(flight.arrival_time, next(counter), [flight]))
-
-        visited = set()
-
-        while heap:
-            item = heapq.heappop(heap)
-            path = item.item
-            last_flight = path[-1]
-
-            if last_flight.destination == demand.destination:
-                return path  # Found a path
-
-            if len(path) >= max_path_length:
-                continue
-
-            visited_key = (last_flight.destination, last_flight.arrival_time)
-            if visited_key in visited:
-                continue
-            visited.add(visited_key)
-
-            last_flight_aircraft = aircraft_dict[last_flight.aircraft_id]
-            aircraft_turnaround_time = last_flight_aircraft.turnaround_time
-
-            for next_flight in flight_graph.get(last_flight.destination, []):
-                if next_flight.departure_time >= last_flight.arrival_time + aircraft_turnaround_time and \
-                   next_flight.capacity - sum(w for (d, w) in next_flight.demands_assigned) > 0:
-                    new_path = path + [next_flight]
-                    heapq.heappush(heap, PrioritizedItem(next_flight.arrival_time, next(counter), new_path))
-
-        return None  # No path found
+      
      
      
      
