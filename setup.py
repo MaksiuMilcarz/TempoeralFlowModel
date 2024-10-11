@@ -2,11 +2,13 @@ import random
 import string
 from collections import defaultdict
 from data_structs import Aircraft, Airport, Demand, Flight
+from data_structs import Vertex, FlightEdge    
 
 def load_data(state):
     # Generate airport codes (e.g., 'A', 'B', ..., 'L')
     airport_codes = list(string.ascii_uppercase[:state.num_airports])
-    state.airports = {code: Airport(code) for code in airport_codes}
+    # Create vertices for each airport
+    state.airports = {code: Vertex(code) for code in airport_codes}
 
     # Generate aircraft
     state.aircraft = [Aircraft(aircraft_id=i+1, capacity=200)
@@ -19,7 +21,7 @@ def load_data(state):
         destination = random.choice(airport_codes)
         while destination == origin:
             destination = random.choice(airport_codes)
-        total_weight = random.randint(10, 100)  # Random weight between 10 and 100
+        total_weight = random.randint(10, 100)
         demand_ready_time = random.choice(state.demand_ready_times)
         demand = Demand(
             demand_id=i,
@@ -29,7 +31,7 @@ def load_data(state):
             demand_ready_time=demand_ready_time
         )
         state.demands.append(demand)
-
+        
 def assign_aircraft_bases(state):
     # Calculate total demand weight per airport
     demand_weights = defaultdict(float)
@@ -63,15 +65,15 @@ def generate_possible_flights(state):
     airport_codes = list(state.airports.keys())
     all_possible_routes = [(a, b) for a in airport_codes for b in airport_codes if a != b]
 
-    # Limit the possible flights to a subset (e.g., 70%)
+    # Limit the possible flights to a subset (e.g., 50%) if desired
     random.shuffle(all_possible_routes)
-    subset_size = int(len(all_possible_routes) * 0.7) 
-    subset_possible_routes = set(all_possible_routes[:subset_size])
+    subset_size = int(len(all_possible_routes) * 0.5)
+    subset_possible_routes = all_possible_routes[:subset_size]
 
-    # Define flight durations
-    state.flight_durations = {}
-    for (origin, destination) in subset_possible_routes:
-        duration = abs(ord(origin) - ord(destination)) * 30 + 60  # Example duration calculation
-        state.flight_durations[(origin, destination)] = duration
-
-    state.possible_flights = subset_possible_routes
+    # Store possible flights without scheduling them
+    state.possible_flights = []
+    for origin_code, destination_code in subset_possible_routes:
+        origin_vertex = state.airports[origin_code]
+        destination_vertex = state.airports[destination_code]
+        flight_edge = FlightEdge(origin_vertex, destination_vertex)
+        state.possible_flights.append(flight_edge)

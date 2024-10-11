@@ -49,3 +49,19 @@ class Flight:
 @dataclass
 class Airport:
     code: str
+    
+class Vertex:
+    def __init__(self, code):
+        self.code = code  # Airport code
+        self.edges = []   # List of outgoing edges
+
+class FlightEdge:
+    def __init__(self, origin, destination):
+        self.origin = origin           # Origin Vertex
+        self.destination = destination # Destination Vertex
+        self.flight_id = None          # Will be assigned when the flight is scheduled
+        self.departure_time = None     # Will be assigned when the flight is scheduled
+        self.arrival_time = None       # Will be assigned when the flight is scheduled
+        self.aircraft_id = None        # Will be assigned when the flight is scheduled
+        self.capacity = None           # Will be assigned when the flight is scheduled
+        self.demands_assigned = []     # List of (demand, weight)
