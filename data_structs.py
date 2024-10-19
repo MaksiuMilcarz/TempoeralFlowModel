@@ -5,6 +5,8 @@ import itertools
 transition_time_of_aircraft = 60
 transition_time_of_demand = 40
 
+a = 1
+
 @dataclass(order=True)
 class PrioritizedItem:
     priority: int
